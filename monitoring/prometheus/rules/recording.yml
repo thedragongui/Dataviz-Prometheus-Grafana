@@ -1,0 +1,36 @@
+groups:
+  - name: app_sli_recording
+    interval: 30s
+    rules:
+      - record: service:request_rate_rps:5m
+        expr: sum by (service, instance, env) (rate(demo_http_requests_total[5m]))
+
+      - record: service:error_rate_ratio:5m
+        expr: |
+          sum by (service, instance, env) (rate(demo_http_requests_total{status_class=~"4xx|5xx"}[5m]))
+          /
+          clamp_min(sum by (service, instance, env) (rate(demo_http_requests_total[5m])), 0.001)
+
+      - record: service:success_rate_ratio:5m
+        expr: |
+          1 - (
+            sum by (service, instance, env) (rate(demo_http_requests_total{status_class="5xx"}[5m]))
+            /
+            clamp_min(sum by (service, instance, env) (rate(demo_http_requests_total[5m])), 0.001)
+          )
+
+      - record: service:latency_p95_seconds:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, service, instance, env) (rate(demo_http_request_duration_seconds_bucket[5m]))
+          )
+
+  - name: infra_recording
+    interval: 30s
+    rules:
+      - record: instance:cpu_usage_ratio:5m
+        expr: 1 - avg by (instance, env) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+
+      - record: instance:memory_usage_ratio
+        expr: 1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)

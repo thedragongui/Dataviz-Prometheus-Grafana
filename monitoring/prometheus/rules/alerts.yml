@@ -1,0 +1,51 @@
+groups:
+  - name: ops_alerts
+    rules:
+      - alert: ApiHigh5xxErrorRate
+        expr: |
+          sum by (service, env) (rate(demo_http_requests_total{status_class="5xx"}[5m]))
+          /
+          clamp_min(sum by (service, env) (rate(demo_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: demo-api
+          env: lab
+          team: ops
+        annotations:
+          summary: "Taux de 5xx > 5% (5m) sur demo-api"
+          message: "Le service {{ $labels.service }} depasse 5% d'erreurs 5xx depuis 5 minutes."
+          what_to_do: "Ouvrir le dashboard N2, identifier le endpoint dominant (panel Top endpoints), verifier le dernier deploiement et corriger/rollback."
+          dashboard: "http://localhost:3000/d/n2diagnostic/api-diagnostic?orgId=1&var-service={{ $labels.service }}&var-env={{ $labels.env }}"
+          runbook: "docs/runbook.md#apihigh5xxerrorrate"
+
+      - alert: HostMemoryPressure
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
+        for: 10m
+        labels:
+          severity: warning
+          service: node
+          env: lab
+          team: ops
+        annotations:
+          summary: "Pression memoire > 90% pendant 10m"
+          message: "L'instance {{ $labels.instance }} est sous pression memoire (> 90%)."
+          what_to_do: "Identifier le processus consommateur (containers), verifier fuite memoire, augmenter limite ou scaler."
+          dashboard: "http://localhost:3000/d/n1overview/api-supervision-n1?orgId=1&var-env={{ $labels.env }}"
+          runbook: "docs/runbook.md#hostmemorypressure"
+
+      - alert: TargetDown
+        expr: up{job=~"demo-api|node-exporter|prometheus"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: observability
+          env: lab
+          team: ops
+        annotations:
+          summary: "Target DOWN: {{ $labels.job }} ({{ $labels.instance }})"
+          message: "Prometheus ne scrape plus {{ $labels.job }} sur {{ $labels.instance }} depuis 2 minutes."
+          what_to_do: "Verifier le container/service, la connectivite reseau et le endpoint /metrics."
+          dashboard: "http://localhost:3000/d/n1overview/api-supervision-n1?orgId=1&var-env={{ $labels.env }}"
+          runbook: "docs/runbook.md#targetdown"
