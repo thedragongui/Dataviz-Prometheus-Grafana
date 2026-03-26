@@ -1,93 +1,116 @@
-# Supervision exploitable en production - Prometheus + Grafana
+# Supervision exploitable en production — Prometheus + Grafana (+ Loki)
 
 ## 1) Objectif
-Ce repository fournit une stack de supervision reproductible pour une API HTTP et son environnement.
 
-Questions couvertes:
-- Service UP / DOWN
-- Taux d'erreurs
-- Latence p95
-- Saturation CPU/RAM
-- Drilldown de diagnostic (N1 -> N2)
+Ce dépôt fournit une stack de supervision **reproductible** (Docker Compose) pour une API HTTP et son hôte, avec **alerting** et **corrélation logs** (bonus).
+
+Questions couvertes :
+
+- Le service est-il **UP** ?
+- Quel est le **taux d’erreur** (4xx/5xx) ?
+- Quelle est la **latence p95** ?
+- Y a-t-il de la **saturation** (CPU / RAM / disque) ?
+- Lors d’un pic : **métriques ↔ logs** (Loki)
 
 ## 2) Architecture
-Composants de la stack (Docker Compose):
-- `demo-api` (Flask instrumentee Prometheus)
-- `prometheus`
-- `alertmanager`
-- `node-exporter`
-- `grafana`
 
-Fichiers principaux:
+| Service | Rôle |
+|--------|------|
+| `demo-api` | API Flask + métriques Prometheus + logs JSON (fichier partagé) |
+| `prometheus` | Collecte et règles (recording + alertes) |
+| `alertmanager` | Routage / groupement des alertes |
+| `node-exporter` | Métriques machine (montages `/proc`, `/sys`, `/` hôte) |
+| `grafana` | Dashboards N1/N2 + datasources Prometheus / Alertmanager / Loki |
+| `loki` | Stockage de logs |
+| `promtail` | Envoi des lignes de `access.jsonl` vers Loki |
+
+Fichiers utiles :
+
 - `docker-compose.yml`
 - `monitoring/prometheus/prometheus.yml`
-- `monitoring/prometheus/rules/recording.yml`
-- `monitoring/prometheus/rules/alerts.yml`
+- `monitoring/prometheus/rules/recording.yml`, `alerts.yml`
 - `monitoring/alertmanager/alertmanager.yml`
-- `monitoring/grafana/dashboards/n1-overview.json`
-- `monitoring/grafana/dashboards/n2-diagnostic.json`
+- `monitoring/loki/loki-config.yaml`, `monitoring/promtail/promtail.yml`
+- `monitoring/grafana/dashboards/n1-overview.json`, `n2-diagnostic.json`
+- `docs/runbook.md`
 
-## 3) Demarrage / Arret
-Prerequis:
-- Docker + Docker Compose v2
+## 3) Démarrage / arrêt
 
-Demarrer:
+**Prérequis** : Docker + Docker Compose v2
+
+**Démarrer** :
+
 ```bash
 docker compose up -d --build
 ```
 
-Arreter:
+**Arrêter** :
+
 ```bash
 docker compose down
 ```
 
-Arreter + supprimer volumes:
+**Arrêter et supprimer les volumes** (Prometheus / Grafana / Loki / logs) :
+
 ```bash
 docker compose down -v
 ```
 
-## 4) Acces outils
-- API demo: http://localhost:8000
-- Metrics API: http://localhost:8000/metrics
-- Prometheus: http://localhost:9090
-- Alertmanager: http://localhost:9093
-- Grafana: http://localhost:3000 (`admin` / `admin`)
+## 4) Accès
+
+| Outil | URL | Identifiants |
+|-------|-----|----------------|
+| API | http://localhost:8000 | — |
+| Métriques | http://localhost:8000/metrics | — |
+| Prometheus | http://localhost:9090 | — |
+| Alertmanager | http://localhost:9093 | — |
+| Grafana | http://localhost:3000 | `admin` / `admin` |
+| Loki (API) | http://localhost:3100 | — |
 
 ## 5) SLI / SLO
-### SLI retenus
-1. **Disponibilite applicative (success ratio)**
-   - Mesure: part des requetes non-5xx
-   - Indicateur: `1 - (5xx / total)`
 
-2. **Latence p95**
-   - Mesure: 95e percentile de `demo_http_request_duration_seconds`
+### SLI (au moins 2)
 
-3. **Taux d'erreurs 5xx**
-   - Mesure: `5xx / total` sur fenetre 5m
+1. **Disponibilité applicative (succès non-5xx)**  
+   Mesure : part des requêtes sans réponse 5xx sur une fenêtre glissante.
+
+2. **Latence p95**  
+   Mesure : 95e percentile de `demo_http_request_duration_seconds` (histogramme).
+
+3. **Complément — taux d’erreurs 5xx**  
+   Mesure : `5xx / total` sur 5 minutes (aligné avec l’alerte métier).
 
 ### SLO
-- **SLO principal:** `>= 99.5%` de succes (non-5xx) sur 24h glissantes (fenetre labo)
-- Equivalence production recommandee: meme objectif sur 30 jours
 
-### Justification rapide des seuils
-- 99.5% est un compromis robuste pour un service HTTP interne/externe de criticite standard.
-- Alerte 5xx a 5% sur 5m: seuil assez sensible pour detecter un incident reel sans sur-bruit.
-- Memoire > 90% sur 10m: filtre les pics courts et cible une saturation durable.
+- **Objectif** : **≥ 99,5 %** de succès (non-5xx) sur **24 h** glissantes (fenêtre adaptée au labo ; en production on viserait souvent **30 jours** pour le même objectif).
 
-## 6) PromQL (requêtes documentees)
-Methodologie appliquee: `table -> validation labels/unites -> graphe`.
+### Justification des seuils
+
+- **99,5 %** : compromis courant pour un service HTTP de criticité « standard » (tolère une courte dégradation sans masquer un incident prolongé).
+- **Alerte 5xx > 5 % sur 5 min** : symptôme métier fort, avec `for: 5m` pour limiter le bruit sur des pics très brefs.
+- **Mémoire > 90 % pendant 10 min** : saturation **durable** (évite d’alerter sur un pic transitoire).
+- **Target down 2 min** : indique un problème de disponibilité ou de collecte, pas un simple glitch réseau.
+
+## 6) PromQL — requêtes documentées
+
+Méthode : **table → validation labels / unités → graphe** ; fenêtres **5m** pour les `rate()` ; `clamp_min(..., 0.001)` pour éviter division par zéro sur trafic faible.
+
+Les variables Grafana `$service`, `$instance`, `$node`, `$env` filtrent les séries.
 
 1. **UP**
+
 ```promql
 max(up{job="demo-api",service=~"$service",instance=~"$instance",env=~"$env"})
 ```
 
-2. **Trafic req/s**
+2. **Trafic (req/s)**
+
 ```promql
 sum(rate(demo_http_requests_total{service=~"$service",instance=~"$instance",env=~"$env"}[5m]))
 ```
 
-3. **Taux erreurs 5xx (%)**
+3. **Erreurs 5xx (%)**
+
 ```promql
 100 * (
   sum(rate(demo_http_requests_total{service=~"$service",instance=~"$instance",status_class="5xx",env=~"$env"}[5m]))
@@ -97,6 +120,7 @@ sum(rate(demo_http_requests_total{service=~"$service",instance=~"$instance",env=
 ```
 
 4. **Latence p95 (ms)**
+
 ```promql
 1000 * histogram_quantile(
   0.95,
@@ -107,80 +131,114 @@ sum(rate(demo_http_requests_total{service=~"$service",instance=~"$instance",env=
 ```
 
 5. **Saturation CPU (%)**
+
 ```promql
 100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle",instance=~"$node",env=~"$env"}[5m])))
 ```
 
 6. **Saturation RAM (%)**
+
 ```promql
 100 * (1 - (node_memory_MemAvailable_bytes{instance=~"$node",env=~"$env"} / node_memory_MemTotal_bytes{instance=~"$node",env=~"$env"}))
 ```
 
-7. **Topk endpoints (req/s)**
+7. **Top endpoints (req/s)**
+
 ```promql
 topk(5, sum by (route) (rate(demo_http_requests_total{service=~"$service",instance=~"$instance",env=~"$env"}[5m])))
 ```
 
-## 7) Dashboards Grafana
-### Dashboard principal N1 (`API Supervision N1`)
-- 9 panels (1 ecran = 1 message)
-- Variables: `service`, `instance`, `node`, `env`
-- KPIs: UP, erreur 5xx, p95, req/s
-- Sante infra: CPU/RAM
-- Top endpoints
-- Drilldown: lien vers `API Diagnostic N2`
+8. **Saturation disque — espace libre (%)** *(complément)*
 
-### Dashboard N2 (`API Diagnostic N2`)
-- Vue d'analyse incident
-- Repartition trafic par classes HTTP
-- Top endpoints en trafic
-- Top endpoints en taux 5xx
-- Top latences p95 par endpoint
-- SLI succes 24h
+```promql
+100 * (
+  1 - (
+    node_filesystem_avail_bytes{instance=~"$node",env=~"$env",fstype!="tmpfs",mountpoint="/"}
+    /
+    node_filesystem_size_bytes{instance=~"$node",env=~"$env",fstype!="tmpfs",mountpoint="/"}
+  )
+)
+```
 
-## 8) Alerting actionnable
-Règles dans `monitoring/prometheus/rules/alerts.yml`:
+Les **recording rules** dans `recording.yml` préagrègent certains ratios (succès, latence p95, CPU) pour des requêtes plus légères si vous les réutilisez dans d’autres dashboards.
 
-1. `ApiHigh5xxErrorRate` (symptome metier)
-- Condition: 5xx > 5% sur 5m
-- Severity: `critical`
-- Annotation: message, quoi faire, lien dashboard N2, runbook
+## 7) LogQL (bonus Loki) — corrélation pic erreurs / latence
 
-2. `HostMemoryPressure` (saturation)
-- Condition: RAM utilisee > 90% sur 10m
-- Severity: `warning`
-- Annotation: action de diagnostic capacitaire
+Les logs applicatifs sont des **lignes JSON** dans `/var/log/app/access.jsonl`, étiquetées `job=demo-api`, `env=lab`.
 
-3. `TargetDown` (qualite de collecte)
-- Condition: `up == 0` pendant 2m
-- Severity: `critical`
-- Annotation: checks service/scrape/reseau
+1. **Filtrer les réponses erreur serveur** (après un pic 5xx sur Grafana) :
 
-## 9) Simulation d'incident (demo restitution)
-### Charge nominale
+```logql
+{job="demo-api"} | json | status >= 500
+```
+
+2. **Filtrer les requêtes lentes** (après un pic de latence p95) :
+
+```logql
+{job="demo-api"} | json | latency_ms > 500
+```
+
+Dans **Grafana → Explore → Loki**, ouvrir la datasource Loki et coller ces requêtes en les alignant sur la **même plage horaire** que le dashboard N1/N2.
+
+## 8) Dashboards Grafana
+
+### N1 — `API Supervision N1` (`/d/n1overview/...`)
+
+- **6–10 panneaux** : UP, % 5xx, p95, req/s, séries trafic / erreurs, CPU+RAM, top routes, top latences p95 par route.
+- **Variables** : `service`, `instance` (API), `node` (node_exporter), `env`.
+- **Drilldown** :
+  - lien vers le dashboard **N2 Diagnostic** (variables conservées) ;
+  - lien vers **Explore Loki** (requête préremplie sur `{job="demo-api"}`).
+
+### N2 — `API Diagnostic N2` (`/d/n2diagnostic/...`)
+
+- Répartition par classe HTTP, top endpoints, tables top trafic / top 5xx, SLI succès 24h, requêtes en cours, débit par méthode+route.
+- **Panneau Logs** : flux Loki avec `| json` pour corréler avec les pics vus en Prometheus.
+
+## 9) Alerting actionnable
+
+Fichier : `monitoring/prometheus/rules/alerts.yml`
+
+| Alerte | Type | Contenu actionnable |
+|--------|------|----------------------|
+| `ApiHigh5xxErrorRate` | Symptôme métier | `summary`, `message`, `what_to_do`, lien dashboard N2, lien `docs/runbook.md` |
+| `HostMemoryPressure` | Saturation | Mémoire hôte > 90 % **10 min** ; lien N1 + runbook |
+| `TargetDown` | Qualité de collecte | `up == 0` **2 min** sur cibles critiques ; lien N1 + runbook |
+
+**Alertmanager** : `monitoring/alertmanager/alertmanager.yml` — routage minimal (`receiver: default`), groupement par `alertname`, `service`, `severity`, `env`.
+
+## 10) Simulation d’incident (restitution ~8 min)
+
+**Charge nominale** :
+
 ```bash
-# Bash
 while true; do curl -s "http://localhost:8000/api/items" > /dev/null; done
 ```
 
-### Incident erreurs 5xx
+**Incident erreurs 5xx** :
+
 ```bash
-# Bash
 while true; do curl -s "http://localhost:8000/api/flaky?failure_rate=0.9" > /dev/null; done
 ```
 
-### Incident latence
+**Incident latence** :
+
 ```bash
-# Bash
 while true; do curl -s "http://localhost:8000/api/items?delay_ms=900&failure_rate=0.0" > /dev/null; done
 ```
 
-### Equivalent PowerShell
-```powershell
-while ($true) { Invoke-WebRequest -UseBasicParsing "http://localhost:8000/api/flaky?failure_rate=0.9" | Out-Null }
-```
+**Diagnostic** : N1 (état global) → N2 (routes / SLI) → Explore Loki (requêtes ci-dessus) + **Alertmanager** si l’alerte a été déclenchée.
 
-## 10) Conseils de restitution (8 minutes)
-- 3 min: contexte, architecture, choix SLI/SLO
-- 3 min: demo N1 (etat global) -> N2 (diagnostic)
-- 2 min: incident simule + parcours d'analyse + alerte associee
+## 11) Structure du dépôt (rappel)
+
+```
+app/                    # API + Dockerfile
+docs/runbook.md         # Procédures incident
+monitoring/
+  alertmanager/
+  grafana/              # provisioning + JSON dashboards
+  loki/
+  promtail/
+  prometheus/
+docker-compose.yml
+```

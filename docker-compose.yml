@@ -6,6 +6,9 @@ services:
     environment:
       SERVICE_NAME: demo-api
       PORT: "8000"
+      LOG_DIR: /var/log/app
+    volumes:
+      - app_logs:/var/log/app
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -49,8 +52,46 @@ services:
   node-exporter:
     image: prom/node-exporter:v1.8.2
     container_name: node-exporter
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
     ports:
       - "9100:9100"
+    restart: unless-stopped
+    networks:
+      - monitoring
+
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: loki
+    command:
+      - -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./monitoring/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+    networks:
+      - monitoring
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: promtail
+    command:
+      - -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./monitoring/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - app_logs:/var/log/app:ro
+    depends_on:
+      - loki
+      - demo-api
     restart: unless-stopped
     networks:
       - monitoring
@@ -71,6 +112,7 @@ services:
     depends_on:
       - prometheus
       - alertmanager
+      - loki
     restart: unless-stopped
     networks:
       - monitoring
@@ -78,6 +120,8 @@ services:
 volumes:
   prometheus_data:
   grafana_data:
+  loki_data:
+  app_logs:
 
 networks:
   monitoring:

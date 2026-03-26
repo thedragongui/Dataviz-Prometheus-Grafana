@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 import random
 import time
+from logging.handlers import RotatingFileHandler
 
 from flask import Flask, Response, request
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "demo-api")
 PORT = int(os.getenv("PORT", "8000"))
+LOG_DIR = os.getenv("LOG_DIR", "/var/log/app")
+ACCESS_LOG_PATH = os.path.join(LOG_DIR, "access.jsonl")
 
 app = Flask(__name__)
 
@@ -30,6 +35,22 @@ INPROGRESS = Gauge(
     "In-flight HTTP requests",
     ["service"],
 )
+
+
+def _setup_access_logger() -> logging.Logger:
+    os.makedirs(LOG_DIR, exist_ok=True)
+    open(ACCESS_LOG_PATH, "a", encoding="utf-8").close()
+    log = logging.getLogger("access")
+    log.setLevel(logging.INFO)
+    log.handlers.clear()
+    fh = RotatingFileHandler(ACCESS_LOG_PATH, maxBytes=5_000_000, backupCount=2)
+    fh.setFormatter(logging.Formatter("%(message)s"))
+    log.addHandler(fh)
+    log.propagate = False
+    return log
+
+
+ACCESS_LOG = _setup_access_logger()
 
 
 @app.before_request
@@ -65,6 +86,21 @@ def _after_request(response: Response) -> Response:
     ).observe(elapsed)
 
     INPROGRESS.labels(service=SERVICE_NAME).dec()
+
+    line = json.dumps(
+        {
+            "ts": time.time(),
+            "service": SERVICE_NAME,
+            "method": request.method,
+            "route": route,
+            "status": response.status_code,
+            "latency_ms": round(elapsed * 1000, 3),
+            "msg": "http_request",
+        },
+        separators=(",", ":"),
+    )
+    ACCESS_LOG.info(line)
+
     return response
 
 

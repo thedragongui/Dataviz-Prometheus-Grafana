@@ -31,6 +31,18 @@
       "tooltip": "Vue de diagnostic detaillee",
       "type": "link",
       "url": "/d/n2diagnostic/api-diagnostic?var-service=${service}&var-instance=${instance}&var-env=${env}"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Explore Loki (logs)",
+      "tooltip": "Corréler un pic erreurs/latence avec les logs",
+      "type": "link",
+      "url": "/explore?schemaVersion=1&panes={\"loki\":{\"datasource\":\"loki\",\"queries\":[{\"refId\":\"A\",\"expr\":\"{job=\\\"demo-api\\\"}\",\"datasource\":{\"type\":\"loki\",\"uid\":\"loki\"}}]}}"
     }
   ],
   "panels": [

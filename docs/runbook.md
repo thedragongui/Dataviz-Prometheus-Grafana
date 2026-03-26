@@ -28,3 +28,13 @@ Actions:
 3. Verifier connectivite reseau entre Prometheus et target.
 4. Verifier configuration `prometheus.yml` (target/port/job).
 5. Confirmer le retour de `up=1`.
+
+## Correlation logs (Loki)
+Contexte: apres un pic d'erreurs ou de latence sur Grafana (N1/N2), verifier les lignes JSON correspondantes.
+
+Actions:
+1. Aligner la plage horaire avec le pic (meme fenetre que les graphiques Prometheus).
+2. Grafana -> Explore -> datasource **Loki**.
+3. Executer `{job="demo-api"} | json | status >= 500` (erreurs) ou `{job="demo-api"} | json | latency_ms > 500` (lenteur).
+4. Croiser **route** et **method** avec les panels "Top endpoints" / p95 par route.
+5. Si les logs ne remontent pas: verifier `promtail` (`docker compose logs promtail`) et le volume `app_logs` partage avec `demo-api`.
