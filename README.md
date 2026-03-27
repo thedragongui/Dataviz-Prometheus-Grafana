@@ -69,7 +69,7 @@ docker compose down -v
 
 ## 5) SLI / SLO
 
-### SLI (au moins 2)
+### SLI
 
 1. **Disponibilité applicative (succès non-5xx)**  
    Mesure : part des requêtes sans réponse 5xx sur une fenêtre glissante.
@@ -207,7 +207,7 @@ Fichier : `monitoring/prometheus/rules/alerts.yml`
 
 **Alertmanager** : `monitoring/alertmanager/alertmanager.yml` — routage minimal (`receiver: default`), groupement par `alertname`, `service`, `severity`, `env`.
 
-## 10) Simulation d’incident (restitution ~8 min)
+## 10) Simulation d’incident
 
 **Charge nominale** :
 
@@ -229,7 +229,7 @@ while true; do curl -s "http://localhost:8000/api/items?delay_ms=900&failure_rat
 
 **Diagnostic** : N1 (état global) → N2 (routes / SLI) → Explore Loki (requêtes ci-dessus) + **Alertmanager** si l’alerte a été déclenchée.
 
-## 11) Structure du dépôt (rappel)
+## 11) Structure du dépôt
 
 ```
 app/                    # API + Dockerfile
